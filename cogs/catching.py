@@ -160,7 +160,7 @@ class Catching(commands.Cog):
             title="🦈 Catching Zone Activated!",
             description=(
                 f"{interaction.channel.mention} is now a shark catching zone.\n"
-                f'Type **"shark"** to catch one when it appears!'
+                f'Type **"nom"** to catch one when it appears!'
             ),
             color=0x2ecc71,
         )
