@@ -46,6 +46,7 @@ class SharkBot(commands.Bot):
             password=config.DB_PASS,
             min_size=2,
             max_size=10,
+            ssl="require",
         )
         print("Database connected ✅")
 
