@@ -5,13 +5,26 @@ from discord import app_commands
 import config
 from data.sharks import SHARKS, get_emoji
 
+# Rarity order for tank display (least rare to most rare)
+RARITY_ORDER = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"]
 
-def get_value(shark_name: str) -> str:
-    """Calculate shark value using same formula as cat-bot: 100 / drop_rate%"""
+
+def get_value(shark_name: str) -> float:
+    """Calculate shark value: 100 / drop_rate%"""
     weight = SHARKS[shark_name]["weight"]
-    drop_rate = weight / 100  # convert to percentage
-    value = round(100 / drop_rate, 2)
-    return f"{value}"
+    drop_rate = weight / 100
+    return round(100 / drop_rate, 2)
+
+
+def fmt_time(seconds: float) -> str:
+    """Format seconds into human readable time."""
+    if seconds is None:
+        return "N/A"
+    if seconds < 60:
+        return f"{round(seconds, 2)}s"
+    minutes = int(seconds // 60)
+    secs = round(seconds % 60, 2)
+    return f"{minutes}m {secs}s"
 
 
 class Collection(commands.Cog):
@@ -25,7 +38,7 @@ class Collection(commands.Cog):
 
         await interaction.response.defer()
 
-        # Get server-wide counts for all shark types in one query
+        # Get server-wide counts for all shark types
         rows = await self.bot.db.fetch(
             "SELECT shark_type, SUM(count) as total FROM collection GROUP BY shark_type"
         )
@@ -58,8 +71,9 @@ class Collection(commands.Cog):
 
         target = member or interaction.user
 
+        # Get collection
         rows = await self.bot.db.fetch(
-            "SELECT shark_type, count FROM collection WHERE user_id=$1 AND count > 0 ORDER BY count DESC",
+            "SELECT shark_type, count FROM collection WHERE user_id=$1 AND count > 0",
             target.id,
         )
 
@@ -69,26 +83,70 @@ class Collection(commands.Cog):
             )
             return
 
-        total_sharks = sum(r["count"] for r in rows)
-
-        # Calculate total SD value of collection
-        total_value = 0
-        lines = []
-        for row in rows:
-            name = row["shark_type"]
-            count = row["count"]
-            emoji = get_emoji(name, interaction.guild) if name in SHARKS else "🦈"
-            value_each = float(get_value(name)) if name in SHARKS else 0
-            value_total = round(value_each * count, 2)
-            total_value += value_total
-            lines.append(f"{emoji} **{name}** x{count} — {value_total} value")
-
-        embed = discord.Embed(
-            title=f"🦈 {target.display_name}'s Tank",
-            description="\n".join(lines),
-            color=0x2980b9,
+        # Get fastest and slowest catch times
+        user_row = await self.bot.db.fetchrow(
+            "SELECT fastest_catch, slowest_catch, total_catches FROM users WHERE user_id=$1",
+            target.id,
         )
-        embed.set_footer(text=f"Total: {total_sharks} sharks — {round(total_value, 2)} total value")
+
+        fastest = user_row["fastest_catch"] if user_row else None
+        slowest = user_row["slowest_catch"] if user_row else None
+        total_catches = user_row["total_catches"] if user_row else 0
+
+        # Build collection dict
+        collection = {row["shark_type"]: row["count"] for row in rows}
+
+        # Calculate totals
+        total_sharks = sum(collection.values())
+        total_value = sum(
+            get_value(name) * count
+            for name, count in collection.items()
+            if name in SHARKS
+        )
+
+        # Sort sharks by rarity order (least rare first)
+        sorted_sharks = []
+        for tier in RARITY_ORDER:
+            for name in SHARKS:
+                if SHARKS[name]["tier"] == tier and name in collection:
+                    sorted_sharks.append(name)
+
+        # Build shark list in two columns
+        lines = []
+        sharks_list = [
+            f"{get_emoji(name, interaction.guild)} **{name}** {collection[name]}"
+            for name in sorted_sharks
+        ]
+
+        # Split into two columns
+        mid = (len(sharks_list) + 1) // 2
+        col1 = sharks_list[:mid]
+        col2 = sharks_list[mid:]
+
+        embed = discord.Embed(color=0x2980b9)
+
+        # Line 1 — username
+        embed.title = f"🦈 {target.display_name}"
+
+        # Line 2 — fastest and slowest
+        embed.description = (
+            f"⚡ Fastest: {fmt_time(fastest)}, Slowest: {fmt_time(slowest)}\n"
+            f"🦈 Sharks: {total_sharks:,}, Value: {round(total_value, 2):,}"
+        )
+
+        # Two column shark list
+        embed.add_field(
+            name="\u200b",
+            value="\n".join(col1),
+            inline=True,
+        )
+        if col2:
+            embed.add_field(
+                name="\u200b",
+                value="\n".join(col2),
+                inline=True,
+            )
+
         embed.set_thumbnail(url=target.display_avatar.url)
 
         await interaction.response.send_message(embed=embed)

@@ -18,6 +18,7 @@ class Catching(commands.Cog):
     def cog_unload(self):
         self.spawn_loop.cancel()
 
+    # ── Spawn Loop ────────────────────────────────────────────────────────
     @tasks.loop(seconds=30)
     async def spawn_loop(self):
         now = time.time()
@@ -27,6 +28,7 @@ class Catching(commands.Cog):
             )
         except Exception:
             return
+
         for row in rows:
             channel_id = row["channel_id"]
             if channel_id in self.active_sharks:
@@ -34,7 +36,9 @@ class Catching(commands.Cog):
             channel = self.bot.get_channel(channel_id)
             if not channel:
                 continue
+
             await self.spawn_shark(channel)
+
             channel_row = await self.bot.db.fetchrow(
                 "SELECT spawn_min, spawn_max FROM channels WHERE channel_id=$1", channel_id
             )
@@ -50,10 +54,12 @@ class Catching(commands.Cog):
     async def before_spawn_loop(self):
         await self.bot.wait_until_ready()
 
+    # ── Spawn a shark ─────────────────────────────────────────────────────
     async def spawn_shark(self, channel):
         shark_name = random.choices(SHARK_NAMES, weights=SHARK_WEIGHTS, k=1)[0]
         shark = SHARKS[shark_name]
 
+        # Register BEFORE sending to avoid race condition
         self.active_sharks[channel.id] = {
             "type": shark_name,
             "spawned_at": time.time(),
@@ -68,6 +74,7 @@ class Catching(commands.Cog):
             color=get_tier_colour(shark_name),
         )
 
+        # Attach image if it exists
         image_name = shark_name.lower().replace(" ", "_") + ".png"
         image_path = f"assets/images/sharks/{image_name}"
         file = None
@@ -85,9 +92,11 @@ class Catching(commands.Cog):
 
             if channel.id in self.active_sharks:
                 self.active_sharks[channel.id]["message"] = msg
+
         except discord.Forbidden:
             self.active_sharks.pop(channel.id, None)
 
+    # ── Catch by typing "nom" ─────────────────────────────────────────────
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
@@ -103,29 +112,53 @@ class Catching(commands.Cog):
         shark_name = data["type"]
         user_id = message.author.id
 
+        # ── Update collection ─────────────────────────────────────────────
         await self.bot.db.execute(
             """INSERT INTO collection (user_id, shark_type, count) VALUES ($1, $2, 1)
                ON CONFLICT (user_id, shark_type) DO UPDATE SET count = collection.count + 1""",
             user_id, shark_name,
         )
+
+        # ── Update total catches ──────────────────────────────────────────
         await self.bot.db.execute(
             """INSERT INTO users (user_id, total_catches) VALUES ($1, 1)
                ON CONFLICT (user_id) DO UPDATE SET total_catches = users.total_catches + 1""",
             user_id,
         )
+
+        # ── Get new count ─────────────────────────────────────────────────
         row = await self.bot.db.fetchrow(
             "SELECT count FROM collection WHERE user_id=$1 AND shark_type=$2",
             user_id, shark_name
         )
         new_count = row["count"] if row else 1
 
+        # ── Format catch time ─────────────────────────────────────────────
         total_seconds = round(time.time() - data["spawned_at"], 2)
         minutes = int(total_seconds // 60)
         seconds = round(total_seconds % 60, 2)
         time_str = f"{minutes} minutes {seconds} seconds" if minutes > 0 else f"{seconds} seconds"
 
-        # Spawn message stays — no delete
+        # ── Update fastest and slowest catch times ────────────────────────
+        await self.bot.db.execute(
+            """
+            UPDATE users SET
+                fastest_catch = CASE
+                    WHEN fastest_catch IS NULL OR $1 < fastest_catch THEN $1
+                    ELSE fastest_catch
+                END,
+                slowest_catch = CASE
+                    WHEN slowest_catch IS NULL OR $1 > slowest_catch THEN $1
+                    ELSE slowest_catch
+                END
+            WHERE user_id = $2
+            """,
+            total_seconds, user_id,
+        )
 
+        # ── Spawn message stays ───────────────────────────────────────────
+
+        # ── Send catch result as plain text ───────────────────────────────
         emoji = get_emoji(shark_name, message.guild)
         await message.channel.send(
             f"{message.author.display_name} cought {emoji} {shark_name} Shark!!!!1!\n"
@@ -133,6 +166,7 @@ class Catching(commands.Cog):
             f"this fella was cought in {time_str}!!!!"
         )
 
+    # ── /forcespawn (admin only) ──────────────────────────────────────────
     @app_commands.command(name="forcespawn", description="Force a shark to spawn (admin only)")
     @app_commands.checks.has_permissions(administrator=True)
     async def forcespawn(self, interaction: discord.Interaction):
@@ -142,6 +176,7 @@ class Catching(commands.Cog):
         await interaction.response.send_message("Spawning a shark...", ephemeral=True)
         await self.spawn_shark(interaction.channel)
 
+    # ── /setup (admin only) ───────────────────────────────────────────────
     @app_commands.command(name="setup", description="Set this channel as a shark catching zone (admin only)")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup(self, interaction: discord.Interaction):
@@ -166,6 +201,7 @@ class Catching(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
+    # ── /setspawntime (admin only) ────────────────────────────────────────
     @app_commands.command(name="setspawntime", description="Set how often sharks spawn in seconds (admin only)")
     @app_commands.describe(
         min_seconds="Minimum time between spawns (30–300 seconds)",
@@ -182,25 +218,32 @@ class Catching(commands.Cog):
         if min_seconds >= max_seconds:
             await interaction.response.send_message("❌ Min must be less than max.", ephemeral=True)
             return
+
         row = await self.bot.db.fetchrow(
             "SELECT channel_id FROM channels WHERE channel_id=$1", interaction.channel_id
         )
         if not row:
             await interaction.response.send_message("❌ Run `/setup` first.", ephemeral=True)
             return
+
         now = time.time()
         next_spawn = now + min_seconds
         await self.bot.db.execute(
             "UPDATE channels SET spawn_min=$1, spawn_max=$2, next_spawn=$3 WHERE channel_id=$4",
             min_seconds, max_seconds, next_spawn, interaction.channel_id,
         )
+
         def fmt(s):
             if s < 60:
                 return f"{s}s"
             return f"{s // 60}m {s % 60}s" if s % 60 else f"{s // 60}m"
+
         embed = discord.Embed(
             title="⏱️ Spawn Time Updated!",
-            description=f"Sharks will now spawn every **{fmt(min_seconds)} – {fmt(max_seconds)}**.",
+            description=(
+                f"Sharks will now spawn every **{fmt(min_seconds)} – {fmt(max_seconds)}**.\n"
+                f"First shark arriving in **{fmt(min_seconds)}**!"
+            ),
             color=0x2ecc71,
         )
         await interaction.response.send_message(embed=embed)
