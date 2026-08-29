@@ -18,7 +18,6 @@ class Catching(commands.Cog):
     def cog_unload(self):
         self.spawn_loop.cancel()
 
-    # ── Spawn Loop ────────────────────────────────────────────────────────
     @tasks.loop(seconds=30)
     async def spawn_loop(self):
         now = time.time()
@@ -28,7 +27,6 @@ class Catching(commands.Cog):
             )
         except Exception:
             return
-
         for row in rows:
             channel_id = row["channel_id"]
             if channel_id in self.active_sharks:
@@ -36,9 +34,7 @@ class Catching(commands.Cog):
             channel = self.bot.get_channel(channel_id)
             if not channel:
                 continue
-
             await self.spawn_shark(channel)
-
             channel_row = await self.bot.db.fetchrow(
                 "SELECT spawn_min, spawn_max FROM channels WHERE channel_id=$1", channel_id
             )
@@ -55,8 +51,13 @@ class Catching(commands.Cog):
         await self.bot.wait_until_ready()
 
     # ── Spawn a shark ─────────────────────────────────────────────────────
-    async def spawn_shark(self, channel):
-        shark_name = random.choices(SHARK_NAMES, weights=SHARK_WEIGHTS, k=1)[0]
+    async def spawn_shark(self, channel, forced_shark: str = None):
+        # Use forced shark if specified, otherwise random
+        if forced_shark and forced_shark in SHARKS:
+            shark_name = forced_shark
+        else:
+            shark_name = random.choices(SHARK_NAMES, weights=SHARK_WEIGHTS, k=1)[0]
+
         shark = SHARKS[shark_name]
 
         self.active_sharks[channel.id] = {
@@ -87,10 +88,8 @@ class Catching(commands.Cog):
                 msg = await channel.send(file=file, embed=embed)
             else:
                 msg = await channel.send(embed=embed)
-
             if channel.id in self.active_sharks:
                 self.active_sharks[channel.id]["message"] = msg
-
         except discord.Forbidden:
             self.active_sharks.pop(channel.id, None)
 
@@ -110,27 +109,23 @@ class Catching(commands.Cog):
         shark_name = data["type"]
         user_id = message.author.id
 
-        # ── Update collection ─────────────────────────────────────────────
         await self.bot.db.execute(
             """INSERT INTO collection (user_id, shark_type, count) VALUES ($1, $2, 1)
                ON CONFLICT (user_id, shark_type) DO UPDATE SET count = collection.count + 1""",
             user_id, shark_name,
         )
 
-        # ── Get new count ─────────────────────────────────────────────────
         row = await self.bot.db.fetchrow(
             "SELECT count FROM collection WHERE user_id=$1 AND shark_type=$2",
             user_id, shark_name
         )
         new_count = row["count"] if row else 1
 
-        # ── Format catch time ─────────────────────────────────────────────
         total_seconds = round(time.time() - data["spawned_at"], 2)
         minutes = int(total_seconds // 60)
         seconds = round(total_seconds % 60, 2)
         time_str = f"{minutes} minutes {seconds} seconds" if minutes > 0 else f"{seconds} seconds"
 
-        # ── Update total catches + fastest/slowest in one operation ───────
         await self.bot.db.execute(
             """
             INSERT INTO users (user_id, total_catches, fastest_catch, slowest_catch)
@@ -149,7 +144,6 @@ class Catching(commands.Cog):
             user_id, total_seconds,
         )
 
-        # ── Send catch result as plain text ───────────────────────────────
         emoji = get_emoji(shark_name, message.guild)
         await message.channel.send(
             f"{message.author.display_name} cought {emoji} {shark_name} Shark!!!!1!\n"
@@ -159,13 +153,29 @@ class Catching(commands.Cog):
 
     # ── /forcespawn (admin only) ──────────────────────────────────────────
     @app_commands.command(name="forcespawn", description="Force a shark to spawn (admin only)")
+    @app_commands.describe(shark_type="Which shark type to spawn (leave blank for random)")
     @app_commands.checks.has_permissions(administrator=True)
-    async def forcespawn(self, interaction: discord.Interaction):
+    async def forcespawn(self, interaction: discord.Interaction, shark_type: str = None):
         if interaction.channel_id in self.active_sharks:
             await interaction.response.send_message("There is already a shark here!", ephemeral=True)
             return
-        await interaction.response.send_message("Spawning a shark...", ephemeral=True)
-        await self.spawn_shark(interaction.channel)
+
+        if shark_type:
+            shark_type = shark_type.title()
+            if shark_type not in SHARKS:
+                shark_list = ", ".join(SHARKS.keys())
+                await interaction.response.send_message(
+                    f"❌ Unknown shark: **{shark_type}**\nValid types: {shark_list}",
+                    ephemeral=True
+                )
+                return
+            await interaction.response.send_message(
+                f"Spawning a **{shark_type} Shark**...", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message("Spawning a random shark...", ephemeral=True)
+
+        await self.spawn_shark(interaction.channel, forced_shark=shark_type)
 
     # ── /setup (admin only) ───────────────────────────────────────────────
     @app_commands.command(name="setup", description="Set this channel as a shark catching zone (admin only)")
