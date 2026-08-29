@@ -59,7 +59,6 @@ class Catching(commands.Cog):
         shark_name = random.choices(SHARK_NAMES, weights=SHARK_WEIGHTS, k=1)[0]
         shark = SHARKS[shark_name]
 
-        # Register BEFORE sending to avoid race condition
         self.active_sharks[channel.id] = {
             "type": shark_name,
             "spawned_at": time.time(),
@@ -74,7 +73,6 @@ class Catching(commands.Cog):
             color=get_tier_colour(shark_name),
         )
 
-        # Attach image if it exists
         image_name = shark_name.lower().replace(" ", "_") + ".png"
         image_path = f"assets/images/sharks/{image_name}"
         file = None
@@ -119,13 +117,6 @@ class Catching(commands.Cog):
             user_id, shark_name,
         )
 
-        # ── Update total catches ──────────────────────────────────────────
-        await self.bot.db.execute(
-            """INSERT INTO users (user_id, total_catches) VALUES ($1, 1)
-               ON CONFLICT (user_id) DO UPDATE SET total_catches = users.total_catches + 1""",
-            user_id,
-        )
-
         # ── Get new count ─────────────────────────────────────────────────
         row = await self.bot.db.fetchrow(
             "SELECT count FROM collection WHERE user_id=$1 AND shark_type=$2",
@@ -139,24 +130,24 @@ class Catching(commands.Cog):
         seconds = round(total_seconds % 60, 2)
         time_str = f"{minutes} minutes {seconds} seconds" if minutes > 0 else f"{seconds} seconds"
 
-        # ── Update fastest and slowest catch times ────────────────────────
+        # ── Update total catches + fastest/slowest in one operation ───────
         await self.bot.db.execute(
             """
-            UPDATE users SET
+            INSERT INTO users (user_id, total_catches, fastest_catch, slowest_catch)
+            VALUES ($1, 1, $2, $2)
+            ON CONFLICT (user_id) DO UPDATE SET
+                total_catches = users.total_catches + 1,
                 fastest_catch = CASE
-                    WHEN fastest_catch IS NULL OR $1 < fastest_catch THEN $1
-                    ELSE fastest_catch
+                    WHEN users.fastest_catch IS NULL OR $2 < users.fastest_catch THEN $2
+                    ELSE users.fastest_catch
                 END,
                 slowest_catch = CASE
-                    WHEN slowest_catch IS NULL OR $1 > slowest_catch THEN $1
-                    ELSE slowest_catch
+                    WHEN users.slowest_catch IS NULL OR $2 > users.slowest_catch THEN $2
+                    ELSE users.slowest_catch
                 END
-            WHERE user_id = $2
             """,
-            total_seconds, user_id,
+            user_id, total_seconds,
         )
-
-        # ── Spawn message stays ───────────────────────────────────────────
 
         # ── Send catch result as plain text ───────────────────────────────
         emoji = get_emoji(shark_name, message.guild)
