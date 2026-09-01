@@ -34,6 +34,7 @@ class SharkBot(commands.Bot):
             password=config.DB_PASS,
             min_size=2,
             max_size=10,
+            ssl="require",
         )
         print("Database connected ✅")
 
@@ -44,14 +45,9 @@ class SharkBot(commands.Bot):
             except Exception as e:
                 print(f"  Failed to load {cog}: {e}")
 
+        # Sync commands to guild only — instant, no duplicates
         print("Syncing slash commands...")
         guild = discord.Object(id=GUILD_ID)
-
-        # Clear global commands to remove duplicates
-        self.tree.clear_commands(guild=None)
-        await self.tree.sync()
-
-        # Sync only to your guild — instant
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
         print("Commands synced ✅")
