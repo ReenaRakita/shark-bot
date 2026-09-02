@@ -37,7 +37,7 @@ def fmt_time(seconds):
     return f"{m}m {s}s"
 
 
-# ── Sharks sub-view (shown when Sharks is selected) ────────────────────────
+# ── Sharks sub-view ────────────────────────────────────────────────────────
 class LeaderboardSharksView(discord.ui.View):
     def __init__(self, bot, guild):
         super().__init__(timeout=120)
@@ -45,7 +45,7 @@ class LeaderboardSharksView(discord.ui.View):
         self.guild = guild
 
     @discord.ui.select(
-        placeholder="Main category...",
+        placeholder="🦈 Sharks",
         row=0,
         options=[
             discord.SelectOption(label="Sharks", value="sharks", emoji="🦈", default=True),
@@ -60,13 +60,12 @@ class LeaderboardSharksView(discord.ui.View):
         if choice == "sharks":
             await interaction.response.defer()
             return
-        # Switch to main view for other categories
         view = LeaderboardMainView(self.bot, self.guild)
         embed = await view.build_embed(choice)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.select(
-        placeholder="Select shark type...",
+        placeholder="All",
         row=1,
         options=[
             discord.SelectOption(label="All", value="All"),
@@ -100,20 +99,18 @@ class LeaderboardSharksView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def build_sharks_embed(self, shark_type: str):
-        medals = ["🥇", "🥈", "🥉"]
         if shark_type == "All":
             rows = await self.bot.db.fetch(
                 """SELECT user_id, SUM(count) as total FROM collection
-                   GROUP BY user_id ORDER BY total DESC LIMIT 10"""
+                   GROUP BY user_id ORDER BY total DESC LIMIT 15"""
             )
             lines = []
-            for i, row in enumerate(rows):
+            for i, row in enumerate(rows, 1):
                 member = self.guild.get_member(row["user_id"])
-                name = member.display_name if member else f"User {row['user_id']}"
-                medal = medals[i] if i < 3 else f"`#{i+1}`"
-                lines.append(f"{medal} **{name}** — {row['total']:,} sharks")
-            return discord.Embed(
-                title="🦈 Most Sharks — All Types",
+                name = member.mention if member else f"User {row['user_id']}"
+                lines.append(f"{i}. **{row['total']:,}** sharks: {name}")
+            embed = discord.Embed(
+                title="🦈 Sharks — All",
                 description="\n".join(lines) if lines else "No catches yet!",
                 color=0x3498db,
             )
@@ -122,20 +119,20 @@ class LeaderboardSharksView(discord.ui.View):
             rows = await self.bot.db.fetch(
                 """SELECT user_id, count FROM collection
                    WHERE shark_type=$1 AND count > 0
-                   ORDER BY count DESC LIMIT 10""",
+                   ORDER BY count DESC LIMIT 15""",
                 shark_type
             )
             lines = []
-            for i, row in enumerate(rows):
+            for i, row in enumerate(rows, 1):
                 member = self.guild.get_member(row["user_id"])
-                name = member.display_name if member else f"User {row['user_id']}"
-                medal = medals[i] if i < 3 else f"`#{i+1}`"
-                lines.append(f"{medal} **{name}** — {row['count']:,}")
-            return discord.Embed(
-                title=f"{emoji} Most {shark_type} Sharks",
+                name = member.mention if member else f"User {row['user_id']}"
+                lines.append(f"{i}. **{row['count']:,}** {shark_type}: {name}")
+            embed = discord.Embed(
+                title=f"{emoji} Sharks — {shark_type}",
                 description="\n".join(lines) if lines else "Nobody has caught this shark yet!",
                 color=0x3498db,
             )
+        return embed
 
 
 # ── Main leaderboard view ──────────────────────────────────────────────────
@@ -158,7 +155,6 @@ class LeaderboardMainView(discord.ui.View):
     async def main_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         choice = select.values[0]
         if choice == "sharks":
-            # Switch to sharks view with sub-dropdown
             view = LeaderboardSharksView(self.bot, self.guild)
             embed = await view.build_sharks_embed("All")
             await interaction.response.edit_message(embed=embed, view=view)
@@ -167,10 +163,7 @@ class LeaderboardMainView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
 
     async def build_embed(self, choice: str):
-        medals = ["🥇", "🥈", "🥉"]
-
         if choice == "value":
-            # Calculate total value per user
             rows = await self.bot.db.fetch(
                 "SELECT user_id, shark_type, count FROM collection WHERE count > 0"
             )
@@ -183,15 +176,14 @@ class LeaderboardMainView(discord.ui.View):
                 val = get_value(name) * row["count"]
                 user_values[uid] = user_values.get(uid, 0) + val
 
-            sorted_users = sorted(user_values.items(), key=lambda x: x[1], reverse=True)[:10]
+            sorted_users = sorted(user_values.items(), key=lambda x: x[1], reverse=True)[:15]
             lines = []
-            for i, (uid, val) in enumerate(sorted_users):
+            for i, (uid, val) in enumerate(sorted_users, 1):
                 member = self.guild.get_member(uid)
-                name = member.display_name if member else f"User {uid}"
-                medal = medals[i] if i < 3 else f"`#{i+1}`"
-                lines.append(f"{medal} **{name}** — {round(val, 2):,} value")
+                name = member.mention if member else f"User {uid}"
+                lines.append(f"{i}. **{round(val, 2):,}** value: {name}")
             return discord.Embed(
-                title="💰 Most Valuable Collections",
+                title="💰 Value Leaderboard",
                 description="\n".join(lines) if lines else "No data yet!",
                 color=0xf1c40f,
             )
@@ -200,14 +192,13 @@ class LeaderboardMainView(discord.ui.View):
             rows = await self.bot.db.fetch(
                 """SELECT user_id, fastest_catch FROM users
                    WHERE fastest_catch IS NOT NULL
-                   ORDER BY fastest_catch ASC LIMIT 10"""
+                   ORDER BY fastest_catch ASC LIMIT 15"""
             )
             lines = []
-            for i, row in enumerate(rows):
+            for i, row in enumerate(rows, 1):
                 member = self.guild.get_member(row["user_id"])
-                name = member.display_name if member else f"User {row['user_id']}"
-                medal = medals[i] if i < 3 else f"`#{i+1}`"
-                lines.append(f"{medal} **{name}** — {fmt_time(row['fastest_catch'])}")
+                name = member.mention if member else f"User {row['user_id']}"
+                lines.append(f"{i}. **{fmt_time(row['fastest_catch'])}**: {name}")
             return discord.Embed(
                 title="⚡ Fastest Catches",
                 description="\n".join(lines) if lines else "No catches yet!",
@@ -218,14 +209,13 @@ class LeaderboardMainView(discord.ui.View):
             rows = await self.bot.db.fetch(
                 """SELECT user_id, slowest_catch FROM users
                    WHERE slowest_catch IS NOT NULL
-                   ORDER BY slowest_catch DESC LIMIT 10"""
+                   ORDER BY slowest_catch DESC LIMIT 15"""
             )
             lines = []
-            for i, row in enumerate(rows):
+            for i, row in enumerate(rows, 1):
                 member = self.guild.get_member(row["user_id"])
-                name = member.display_name if member else f"User {row['user_id']}"
-                medal = medals[i] if i < 3 else f"`#{i+1}`"
-                lines.append(f"{medal} **{name}** — {fmt_time(row['slowest_catch'])}")
+                name = member.mention if member else f"User {row['user_id']}"
+                lines.append(f"{i}. **{fmt_time(row['slowest_catch'])}**: {name}")
             return discord.Embed(
                 title="🐢 Slowest Catches",
                 description="\n".join(lines) if lines else "No catches yet!",
@@ -235,16 +225,15 @@ class LeaderboardMainView(discord.ui.View):
         elif choice == "sd":
             rows = await self.bot.db.fetch(
                 """SELECT user_id, shark_dollars FROM users
-                   ORDER BY shark_dollars DESC LIMIT 10"""
+                   ORDER BY shark_dollars DESC LIMIT 15"""
             )
             lines = []
-            for i, row in enumerate(rows):
+            for i, row in enumerate(rows, 1):
                 member = self.guild.get_member(row["user_id"])
-                name = member.display_name if member else f"User {row['user_id']}"
-                medal = medals[i] if i < 3 else f"`#{i+1}`"
-                lines.append(f"{medal} **{name}** — {row['shark_dollars']:,} SD")
+                name = member.mention if member else f"User {row['user_id']}"
+                lines.append(f"{i}. **{row['shark_dollars']:,}** SD: {name}")
             return discord.Embed(
-                title="💵 Most Shark Dollars",
+                title="💵 Shark Dollars Leaderboard",
                 description="\n".join(lines) if lines else "No data yet!",
                 color=0xf39c12,
             )
@@ -343,10 +332,8 @@ class Leveling(commands.Cog):
         if not await config.check_channel(interaction, config.CHANNEL_CATCHING):
             return
 
-        # Default: sharks all
         view = LeaderboardSharksView(self.bot, interaction.guild)
         embed = await view.build_sharks_embed("All")
-        embed.set_footer(text="Use the dropdowns to switch leaderboards")
         await interaction.response.send_message(embed=embed, view=view)
 
 
