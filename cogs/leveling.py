@@ -14,6 +14,16 @@ LEVEL_ROLES = {
     50: "Ancient One",
 }
 
+MAIN_OPTIONS = [
+    ("Sharks",       "sharks", "🦈"),
+    ("Value",        "value",  "💰"),
+    ("Fast",         "fast",   "⚡"),
+    ("Slow",         "slow",   "🐢"),
+    ("Shark Dollars","sd",     "💵"),
+]
+
+SHARK_OPTIONS = ["All"] + list(SHARKS.keys())
+
 def xp_for_level(level):
     return sum(i * 100 for i in range(1, level + 1))
 
@@ -24,8 +34,7 @@ def level_from_xp(xp):
     return level
 
 def get_value(shark_name: str) -> float:
-    weight = SHARKS[shark_name]["weight"]
-    return round(100 / (weight / 100), 2)
+    return round(100 / (SHARKS[shark_name]["weight"] / 100), 2)
 
 def fmt_time(seconds):
     if seconds is None:
@@ -36,67 +45,53 @@ def fmt_time(seconds):
     s = round(seconds % 60, 2)
     return f"{m}m {s}s"
 
+def build_main_select(selected: str, row: int) -> discord.ui.Select:
+    options = [
+        discord.SelectOption(label=label, value=val, emoji=emoji, default=(val == selected))
+        for label, val, emoji in MAIN_OPTIONS
+    ]
+    sel = discord.ui.Select(options=options, row=row)
+    return sel
 
-# ── Sharks sub-view ────────────────────────────────────────────────────────
+def build_shark_select(selected: str, row: int) -> discord.ui.Select:
+    options = [
+        discord.SelectOption(label=s, value=s, default=(s == selected))
+        for s in SHARK_OPTIONS
+    ]
+    sel = discord.ui.Select(placeholder=selected, options=options, row=row)
+    return sel
+
+
+# ── Sharks view (two dropdowns) ────────────────────────────────────────────
 class LeaderboardSharksView(discord.ui.View):
-    def __init__(self, bot, guild):
+    def __init__(self, bot, guild, shark_selected="All"):
         super().__init__(timeout=120)
         self.bot = bot
         self.guild = guild
+        self.shark_selected = shark_selected
 
-    @discord.ui.select(
-        placeholder="🦈 Sharks",
-        row=0,
-        options=[
-            discord.SelectOption(label="Sharks", value="sharks", emoji="🦈", default=True),
-            discord.SelectOption(label="Value", value="value", emoji="💰"),
-            discord.SelectOption(label="Fast", value="fast", emoji="⚡"),
-            discord.SelectOption(label="Slow", value="slow", emoji="🐢"),
-            discord.SelectOption(label="Shark Dollars", value="sd", emoji="💵"),
-        ]
-    )
-    async def main_select(self, interaction: discord.Interaction, select: discord.ui.Select):
-        choice = select.values[0]
+        main_sel = build_main_select("sharks", row=0)
+        main_sel.callback = self.main_callback
+        self.add_item(main_sel)
+
+        shark_sel = build_shark_select(shark_selected, row=1)
+        shark_sel.callback = self.shark_callback
+        self.add_item(shark_sel)
+
+    async def main_callback(self, interaction: discord.Interaction):
+        choice = interaction.data["values"][0]
         if choice == "sharks":
             await interaction.response.defer()
             return
-        view = LeaderboardMainView(self.bot, self.guild)
+        view = LeaderboardMainView(self.bot, self.guild, selected=choice)
         embed = await view.build_embed(choice)
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.select(
-        placeholder="All",
-        row=1,
-        options=[
-            discord.SelectOption(label="All", value="All"),
-            discord.SelectOption(label="Great White", value="Great White"),
-            discord.SelectOption(label="Dog", value="Dog"),
-            discord.SelectOption(label="Cat", value="Cat"),
-            discord.SelectOption(label="Spinner", value="Spinner"),
-            discord.SelectOption(label="Nurse", value="Nurse"),
-            discord.SelectOption(label="Lemon", value="Lemon"),
-            discord.SelectOption(label="Bull", value="Bull"),
-            discord.SelectOption(label="Tiger", value="Tiger"),
-            discord.SelectOption(label="Hammerhead", value="Hammerhead"),
-            discord.SelectOption(label="Swell", value="Swell"),
-            discord.SelectOption(label="Whale", value="Whale"),
-            discord.SelectOption(label="School", value="School"),
-            discord.SelectOption(label="Thresher", value="Thresher"),
-            discord.SelectOption(label="Wobbegong", value="Wobbegong"),
-            discord.SelectOption(label="Sixgill", value="Sixgill"),
-            discord.SelectOption(label="Greenland", value="Greenland"),
-            discord.SelectOption(label="Basking", value="Basking"),
-            discord.SelectOption(label="Goblin", value="Goblin"),
-            discord.SelectOption(label="Ghost", value="Ghost"),
-            discord.SelectOption(label="Cookiecutter", value="Cookiecutter"),
-            discord.SelectOption(label="Dwarf", value="Dwarf"),
-            discord.SelectOption(label="Ninja", value="Ninja"),
-        ]
-    )
-    async def shark_select(self, interaction: discord.Interaction, select: discord.ui.Select):
-        shark_type = select.values[0]
+    async def shark_callback(self, interaction: discord.Interaction):
+        shark_type = interaction.data["values"][0]
+        view = LeaderboardSharksView(self.bot, self.guild, shark_selected=shark_type)
         embed = await self.build_sharks_embed(shark_type)
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     async def build_sharks_embed(self, shark_type: str):
         if shark_type == "All":
@@ -109,7 +104,7 @@ class LeaderboardSharksView(discord.ui.View):
                 member = self.guild.get_member(row["user_id"])
                 name = member.mention if member else f"User {row['user_id']}"
                 lines.append(f"{i}. **{row['total']:,}** sharks: {name}")
-            embed = discord.Embed(
+            return discord.Embed(
                 title="🦈 Sharks — All",
                 description="\n".join(lines) if lines else "No catches yet!",
                 color=0x3498db,
@@ -127,40 +122,35 @@ class LeaderboardSharksView(discord.ui.View):
                 member = self.guild.get_member(row["user_id"])
                 name = member.mention if member else f"User {row['user_id']}"
                 lines.append(f"{i}. **{row['count']:,}** {shark_type}: {name}")
-            embed = discord.Embed(
+            return discord.Embed(
                 title=f"{emoji} Sharks — {shark_type}",
                 description="\n".join(lines) if lines else "Nobody has caught this shark yet!",
                 color=0x3498db,
             )
-        return embed
 
 
-# ── Main leaderboard view ──────────────────────────────────────────────────
+# ── Main view (single dropdown) ────────────────────────────────────────────
 class LeaderboardMainView(discord.ui.View):
-    def __init__(self, bot, guild):
+    def __init__(self, bot, guild, selected="value"):
         super().__init__(timeout=120)
         self.bot = bot
         self.guild = guild
+        self.selected = selected
 
-    @discord.ui.select(
-        placeholder="Choose a leaderboard...",
-        options=[
-            discord.SelectOption(label="Sharks", value="sharks", emoji="🦈"),
-            discord.SelectOption(label="Value", value="value", emoji="💰"),
-            discord.SelectOption(label="Fast", value="fast", emoji="⚡"),
-            discord.SelectOption(label="Slow", value="slow", emoji="🐢"),
-            discord.SelectOption(label="Shark Dollars", value="sd", emoji="💵"),
-        ]
-    )
-    async def main_select(self, interaction: discord.Interaction, select: discord.ui.Select):
-        choice = select.values[0]
+        main_sel = build_main_select(selected, row=0)
+        main_sel.callback = self.main_callback
+        self.add_item(main_sel)
+
+    async def main_callback(self, interaction: discord.Interaction):
+        choice = interaction.data["values"][0]
         if choice == "sharks":
             view = LeaderboardSharksView(self.bot, self.guild)
             embed = await view.build_sharks_embed("All")
             await interaction.response.edit_message(embed=embed, view=view)
         else:
-            embed = await self.build_embed(choice)
-            await interaction.response.edit_message(embed=embed, view=self)
+            view = LeaderboardMainView(self.bot, self.guild, selected=choice)
+            embed = await view.build_embed(choice)
+            await interaction.response.edit_message(embed=embed, view=view)
 
     async def build_embed(self, choice: str):
         if choice == "value":
@@ -170,73 +160,46 @@ class LeaderboardMainView(discord.ui.View):
             user_values = {}
             for row in rows:
                 uid = row["user_id"]
-                name = row["shark_type"]
-                if name not in SHARKS:
+                n = row["shark_type"]
+                if n not in SHARKS:
                     continue
-                val = get_value(name) * row["count"]
-                user_values[uid] = user_values.get(uid, 0) + val
-
+                user_values[uid] = user_values.get(uid, 0) + get_value(n) * row["count"]
             sorted_users = sorted(user_values.items(), key=lambda x: x[1], reverse=True)[:15]
             lines = []
             for i, (uid, val) in enumerate(sorted_users, 1):
                 member = self.guild.get_member(uid)
                 name = member.mention if member else f"User {uid}"
                 lines.append(f"{i}. **{round(val, 2):,}** value: {name}")
-            return discord.Embed(
-                title="💰 Value Leaderboard",
-                description="\n".join(lines) if lines else "No data yet!",
-                color=0xf1c40f,
-            )
+            return discord.Embed(title="💰 Value Leaderboard", description="\n".join(lines) if lines else "No data yet!", color=0xf1c40f)
 
         elif choice == "fast":
             rows = await self.bot.db.fetch(
-                """SELECT user_id, fastest_catch FROM users
-                   WHERE fastest_catch IS NOT NULL
-                   ORDER BY fastest_catch ASC LIMIT 15"""
+                "SELECT user_id, fastest_catch FROM users WHERE fastest_catch IS NOT NULL ORDER BY fastest_catch ASC LIMIT 15"
             )
-            lines = []
-            for i, row in enumerate(rows, 1):
-                member = self.guild.get_member(row["user_id"])
-                name = member.mention if member else f"User {row['user_id']}"
-                lines.append(f"{i}. **{fmt_time(row['fastest_catch'])}**: {name}")
-            return discord.Embed(
-                title="⚡ Fastest Catches",
-                description="\n".join(lines) if lines else "No catches yet!",
-                color=0x2ecc71,
-            )
+            lines = [f"{i}. **{fmt_time(r['fastest_catch'])}**: {(self.guild.get_member(r['user_id']) or f'User {r[\"user_id\"]}').mention if self.guild.get_member(r['user_id']) else f'User {r[\"user_id\"]}'}" for i, r in enumerate(rows, 1)]
+            return discord.Embed(title="⚡ Fastest Catches", description="\n".join(lines) if lines else "No catches yet!", color=0x2ecc71)
 
         elif choice == "slow":
             rows = await self.bot.db.fetch(
-                """SELECT user_id, slowest_catch FROM users
-                   WHERE slowest_catch IS NOT NULL
-                   ORDER BY slowest_catch DESC LIMIT 15"""
+                "SELECT user_id, slowest_catch FROM users WHERE slowest_catch IS NOT NULL ORDER BY slowest_catch DESC LIMIT 15"
             )
             lines = []
-            for i, row in enumerate(rows, 1):
-                member = self.guild.get_member(row["user_id"])
-                name = member.mention if member else f"User {row['user_id']}"
-                lines.append(f"{i}. **{fmt_time(row['slowest_catch'])}**: {name}")
-            return discord.Embed(
-                title="🐢 Slowest Catches",
-                description="\n".join(lines) if lines else "No catches yet!",
-                color=0xe74c3c,
-            )
+            for i, r in enumerate(rows, 1):
+                member = self.guild.get_member(r["user_id"])
+                name = member.mention if member else f"User {r['user_id']}"
+                lines.append(f"{i}. **{fmt_time(r['slowest_catch'])}**: {name}")
+            return discord.Embed(title="🐢 Slowest Catches", description="\n".join(lines) if lines else "No catches yet!", color=0xe74c3c)
 
         elif choice == "sd":
             rows = await self.bot.db.fetch(
-                """SELECT user_id, shark_dollars FROM users
-                   ORDER BY shark_dollars DESC LIMIT 15"""
+                "SELECT user_id, shark_dollars FROM users ORDER BY shark_dollars DESC LIMIT 15"
             )
             lines = []
-            for i, row in enumerate(rows, 1):
-                member = self.guild.get_member(row["user_id"])
-                name = member.mention if member else f"User {row['user_id']}"
-                lines.append(f"{i}. **{row['shark_dollars']:,}** SD: {name}")
-            return discord.Embed(
-                title="💵 Shark Dollars Leaderboard",
-                description="\n".join(lines) if lines else "No data yet!",
-                color=0xf39c12,
-            )
+            for i, r in enumerate(rows, 1):
+                member = self.guild.get_member(r["user_id"])
+                name = member.mention if member else f"User {r['user_id']}"
+                lines.append(f"{i}. **{r['shark_dollars']:,}** SD: {name}")
+            return discord.Embed(title="💵 Shark Dollars Leaderboard", description="\n".join(lines) if lines else "No data yet!", color=0xf39c12)
 
 
 # ── Cog ───────────────────────────────────────────────────────────────────
@@ -331,7 +294,6 @@ class Leveling(commands.Cog):
     async def leaderboard(self, interaction: discord.Interaction):
         if not await config.check_channel(interaction, config.CHANNEL_CATCHING):
             return
-
         view = LeaderboardSharksView(self.bot, interaction.guild)
         embed = await view.build_sharks_embed("All")
         await interaction.response.send_message(embed=embed, view=view)
