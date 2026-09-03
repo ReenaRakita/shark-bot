@@ -105,9 +105,13 @@ class Collection(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     # ── /gift ─────────────────────────────────────────────────────────────
-    @app_commands.command(name="gift", description="Gift a shark to another member")
-    @app_commands.describe(member="Who to gift to", shark_type="Which shark to gift")
-    async def gift(self, interaction: discord.Interaction, member: discord.Member, shark_type: str):
+    @app_commands.command(name="gift", description="Gift sharks to another member")
+    @app_commands.describe(
+        member="Who to gift to",
+        shark_type="Which shark to gift",
+        amount="How many to gift (default 1)"
+    )
+    async def gift(self, interaction: discord.Interaction, member: discord.Member, shark_type: str, amount: int = 1):
         if not await config.check_channel(interaction, config.CHANNEL_CATCHING):
             return
         await interaction.response.defer()
@@ -120,32 +124,36 @@ class Collection(commands.Cog):
         if shark_type not in SHARKS:
             await interaction.followup.send(f"Unknown shark: **{shark_type}**", ephemeral=True)
             return
+        if amount < 1:
+            await interaction.followup.send("Amount must be at least 1.", ephemeral=True)
+            return
 
         row = await self.bot.db.fetchrow(
             "SELECT count FROM collection WHERE user_id=$1 AND shark_type=$2",
             interaction.user.id, shark_type
         )
-        if not row or row["count"] < 1:
+        if not row or row["count"] < amount:
+            have = row["count"] if row else 0
             await interaction.followup.send(
-                f"You don't have any **{shark_type} Sharks** to gift!", ephemeral=True
+                f"You only have **{have}** {shark_type} Shark(s) to gift!", ephemeral=True
             )
             return
 
         # Remove from giver
         await self.bot.db.execute(
-            "UPDATE collection SET count=count-1 WHERE user_id=$1 AND shark_type=$2",
-            interaction.user.id, shark_type
+            "UPDATE collection SET count=count-$1 WHERE user_id=$2 AND shark_type=$3",
+            amount, interaction.user.id, shark_type
         )
         # Add to receiver
         await self.bot.db.execute(
-            """INSERT INTO collection (user_id, shark_type, count) VALUES ($1, $2, 1)
-               ON CONFLICT (user_id, shark_type) DO UPDATE SET count=collection.count+1""",
-            member.id, shark_type
+            """INSERT INTO collection (user_id, shark_type, count) VALUES ($1, $2, $3)
+               ON CONFLICT (user_id, shark_type) DO UPDATE SET count=collection.count+$3""",
+            member.id, shark_type, amount
         )
 
         emoji = get_emoji(shark_type, interaction.guild)
         await interaction.followup.send(
-            f"🎁 **{interaction.user.display_name}** gifted {emoji} **{shark_type} Shark** to {member.mention}!"
+            f"🎁 **{interaction.user.display_name}** gifted **{amount}x** {emoji} **{shark_type} Shark** to {member.mention}!"
         )
 
     @gift.autocomplete("shark_type")
