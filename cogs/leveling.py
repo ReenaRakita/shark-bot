@@ -1,4 +1,7 @@
 # cogs/leveling.py
+# /rank removed as requested
+# /leaderboard fixed with defer
+
 import time
 import random
 import discord
@@ -15,11 +18,11 @@ LEVEL_ROLES = {
 }
 
 MAIN_OPTIONS = [
-    ("Sharks",       "sharks", "🦈"),
-    ("Value",        "value",  "💰"),
-    ("Fast",         "fast",   "⚡"),
-    ("Slow",         "slow",   "🐢"),
-    ("Shark Dollars","sd",     "💵"),
+    ("Sharks",        "sharks", "🦈"),
+    ("Value",         "value",  "💰"),
+    ("Fast",          "fast",   "⚡"),
+    ("Slow",          "slow",   "🐢"),
+    ("Shark Dollars", "sd",     "💵"),
 ]
 
 SHARK_OPTIONS = ["All"] + list(SHARKS.keys())
@@ -62,7 +65,6 @@ def build_shark_select(selected: str, row: int) -> discord.ui.Select:
     return sel
 
 
-# ── Sharks view (two dropdowns) ────────────────────────────────────────────
 class LeaderboardSharksView(discord.ui.View):
     def __init__(self, bot, guild, shark_selected="All"):
         super().__init__(timeout=120)
@@ -129,7 +131,6 @@ class LeaderboardSharksView(discord.ui.View):
             )
 
 
-# ── Main view (single dropdown) ────────────────────────────────────────────
 class LeaderboardMainView(discord.ui.View):
     def __init__(self, bot, guild, selected="value"):
         super().__init__(timeout=120)
@@ -176,7 +177,11 @@ class LeaderboardMainView(discord.ui.View):
             rows = await self.bot.db.fetch(
                 "SELECT user_id, fastest_catch FROM users WHERE fastest_catch IS NOT NULL ORDER BY fastest_catch ASC LIMIT 15"
             )
-            lines = [f"{i}. **{fmt_time(r['fastest_catch'])}**: {(self.guild.get_member(r['user_id']) or f'User {r[\"user_id\"]}').mention if self.guild.get_member(r['user_id']) else f'User {r[\"user_id\"]}'}" for i, r in enumerate(rows, 1)]
+            lines = []
+            for i, r in enumerate(rows, 1):
+                member = self.guild.get_member(r["user_id"])
+                name = member.mention if member else f"User {r['user_id']}"
+                lines.append(f"{i}. **{fmt_time(r['fastest_catch'])}**: {name}")
             return discord.Embed(title="⚡ Fastest Catches", description="\n".join(lines) if lines else "No catches yet!", color=0x2ecc71)
 
         elif choice == "slow":
@@ -202,7 +207,6 @@ class LeaderboardMainView(discord.ui.View):
             return discord.Embed(title="💵 Shark Dollars Leaderboard", description="\n".join(lines) if lines else "No data yet!", color=0xf39c12)
 
 
-# ── Cog ───────────────────────────────────────────────────────────────────
 class Leveling(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -256,47 +260,14 @@ class Leveling(commands.Cog):
                     except discord.Forbidden:
                         pass
 
-    @app_commands.command(name="rank", description="Check your level and XP")
-    @app_commands.describe(member="The member to check (leave blank for yourself)")
-    async def rank(self, interaction: discord.Interaction, member: discord.Member = None):
-        if not await config.check_channel(interaction, config.CHANNEL_CATCHING):
-            return
-        target = member or interaction.user
-        profile = await self.bot.db.fetchrow(
-            "SELECT xp, level FROM profiles WHERE user_id=$1 AND guild_id=$2",
-            target.id, interaction.guild_id,
-        )
-        if not profile:
-            await interaction.response.send_message(
-                f"{target.display_name} has not sent any messages yet!", ephemeral=True
-            )
-            return
-        xp = profile["xp"]
-        level = profile["level"]
-        xp_needed = xp_for_level(level + 1)
-        xp_current = xp_for_level(level)
-        xp_progress = xp - xp_current
-        xp_to_next = xp_needed - xp_current
-        filled = int((xp_progress / xp_to_next) * 10)
-        bar = "█" * filled + "░" * (10 - filled)
-        embed = discord.Embed(title=f"🦈 {target.display_name}'s Rank", color=0x3498db)
-        embed.add_field(name="Level", value=str(level), inline=True)
-        embed.add_field(name="Total XP", value=str(xp), inline=True)
-        embed.add_field(
-            name=f"Progress to Level {level+1}",
-            value=f"`{bar}` {xp_progress}/{xp_to_next} XP",
-            inline=False,
-        )
-        embed.set_thumbnail(url=target.display_avatar.url)
-        await interaction.response.send_message(embed=embed)
-
     @app_commands.command(name="leaderboard", description="Server leaderboards")
     async def leaderboard(self, interaction: discord.Interaction):
         if not await config.check_channel(interaction, config.CHANNEL_CATCHING):
             return
+        await interaction.response.defer()
         view = LeaderboardSharksView(self.bot, interaction.guild)
         embed = await view.build_sharks_embed("All")
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
 
 async def setup(bot):
