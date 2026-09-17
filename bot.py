@@ -12,6 +12,7 @@ COGS = [
     "cogs.aquarium",
     "cogs.breeding",
     "cogs.admin",
+    "cogs.bounties",
 ]
 
 GUILD_ID = 1531903202457288844
@@ -45,7 +46,6 @@ class SharkBot(commands.Bot):
             except Exception as e:
                 print(f"  Failed to load {cog}: {e}")
 
-        # Sync commands to guild only — instant, no duplicates
         print("Syncing slash commands...")
         guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
