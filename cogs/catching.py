@@ -54,29 +54,22 @@ class Catching(commands.Cog):
         shark_name = forced_shark if (forced_shark and forced_shark in SHARKS) else \
                      random.choices(SHARK_NAMES, weights=SHARK_WEIGHTS, k=1)[0]
         shark = SHARKS[shark_name]
-
         self.active_sharks[channel.id] = {
-            "type": shark_name,
-            "spawned_at": time.time(),
-            "message": None,
+            "type": shark_name, "spawned_at": time.time(), "message": None,
         }
-
         emoji = get_emoji(shark_name, channel.guild)
         embed = discord.Embed(
             title=f"{emoji} {shark_name} Shark has appeared!",
             description=f'Type **"nom"** to catch it!\n\n*{shark["description"]}*',
             color=get_tier_colour(shark_name),
         )
-
         image_name = shark_name.lower().replace(" ", "_") + ".png"
         image_path = f"assets/images/sharks/{image_name}"
         file = None
         if os.path.exists(image_path):
             file = discord.File(image_path, filename=image_name)
             embed.set_image(url=f"attachment://{image_name}")
-
         embed.set_footer(text="It will stay until someone catches it!")
-
         try:
             msg = await channel.send(file=file, embed=embed) if file else await channel.send(embed=embed)
             if channel.id in self.active_sharks:
@@ -104,7 +97,6 @@ class Catching(commands.Cog):
                ON CONFLICT (user_id, shark_type) DO UPDATE SET count=collection.count+1""",
             user_id, shark_name,
         )
-
         row = await self.bot.db.fetchrow(
             "SELECT count FROM collection WHERE user_id=$1 AND shark_type=$2",
             user_id, shark_name
@@ -133,10 +125,12 @@ class Catching(commands.Cog):
             f"this fella was cought in {time_str}!!!!"
         )
 
-        # ── Update bounties ───────────────────────────────────────────────
+        # ── Update bounties (pass catch_time for time-based bounties) ─────
         bounties_cog = self.bot.cogs.get("Bounties")
         if bounties_cog:
-            await bounties_cog.update_bounties(user_id, shark_name, message.channel)
+            await bounties_cog.update_bounties(
+                user_id, shark_name, message.channel, catch_time=total_seconds
+            )
 
     @app_commands.command(name="forcespawn", description="Force a shark to spawn (admin only)")
     @app_commands.describe(shark_type="Which shark type to spawn (leave blank for random)")
@@ -166,8 +160,7 @@ class Catching(commands.Cog):
             interaction.channel_id, interaction.guild_id, next_spawn,
         )
         await self.bot.db.execute(
-            "INSERT INTO servers (server_id) VALUES ($1) ON CONFLICT DO NOTHING",
-            interaction.guild_id,
+            "INSERT INTO servers (server_id) VALUES ($1) ON CONFLICT DO NOTHING", interaction.guild_id,
         )
         embed = discord.Embed(
             title="🦈 Catching Zone Activated!",

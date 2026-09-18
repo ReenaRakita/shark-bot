@@ -10,8 +10,7 @@ RARITY_ORDER = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"]
 
 def get_value(shark_name: str) -> float:
     weight = SHARKS[shark_name]["weight"]
-    drop_rate = weight / 100
-    return round(100 / drop_rate, 2)
+    return round(100 / (weight / 100), 2)
 
 
 def fmt_time(seconds: float) -> str:
@@ -76,9 +75,7 @@ class Collection(commands.Cog):
         collection = {row["shark_type"]: row["count"] for row in rows}
         total_sharks = sum(collection.values())
         total_value = sum(
-            get_value(name) * count
-            for name, count in collection.items()
-            if name in SHARKS
+            get_value(name) * count for name, count in collection.items() if name in SHARKS
         )
         sorted_sharks = []
         for tier in RARITY_ORDER:
@@ -115,9 +112,7 @@ class Collection(commands.Cog):
         if not await config.check_channel(interaction, config.CHANNEL_CATCHING):
             return
         await interaction.response.defer()
-
         shark_type = shark_type.title()
-
         if member.id == interaction.user.id:
             await interaction.followup.send("You cannot gift yourself.", ephemeral=True)
             return
@@ -127,7 +122,6 @@ class Collection(commands.Cog):
         if amount < 1:
             await interaction.followup.send("Amount must be at least 1.", ephemeral=True)
             return
-
         row = await self.bot.db.fetchrow(
             "SELECT count FROM collection WHERE user_id=$1 AND shark_type=$2",
             interaction.user.id, shark_type
@@ -138,23 +132,27 @@ class Collection(commands.Cog):
                 f"You only have **{have}** {shark_type} Shark(s) to gift!", ephemeral=True
             )
             return
-
-        # Remove from giver
         await self.bot.db.execute(
             "UPDATE collection SET count=count-$1 WHERE user_id=$2 AND shark_type=$3",
             amount, interaction.user.id, shark_type
         )
-        # Add to receiver
         await self.bot.db.execute(
-            """INSERT INTO collection (user_id, shark_type, count) VALUES ($1, $2, $3)
+            """INSERT INTO collection (user_id, shark_type, count) VALUES ($1,$2,$3)
                ON CONFLICT (user_id, shark_type) DO UPDATE SET count=collection.count+$3""",
             member.id, shark_type, amount
         )
-
         emoji = get_emoji(shark_type, interaction.guild)
         await interaction.followup.send(
             f"🎁 **{interaction.user.display_name}** gifted **{amount}x** {emoji} **{shark_type} Shark** to {member.mention}!"
         )
+
+        # ── Update gift bounties ──────────────────────────────────────────
+        bounties_cog = self.bot.cogs.get("Bounties")
+        if bounties_cog:
+            for _ in range(amount):
+                await bounties_cog.update_gift_bounties(
+                    interaction.user.id, shark_type, interaction.channel
+                )
 
     @gift.autocomplete("shark_type")
     async def gift_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -163,10 +161,7 @@ class Collection(commands.Cog):
             interaction.user.id
         )
         choices = [
-            app_commands.Choice(
-                name=f"{row['shark_type']} (x{row['count']})",
-                value=row["shark_type"]
-            )
+            app_commands.Choice(name=f"{row['shark_type']} (x{row['count']})", value=row["shark_type"])
             for row in rows
             if current.lower() in row["shark_type"].lower()
         ]
